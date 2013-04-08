@@ -39,8 +39,8 @@ def parseOptions():
                       help='File to write adjustment comments to. (Default: no comments file.)')
     parser.add_option('-d', '--directory', dest='dir', default='.',
                       help='path to directory containing offset files (default: current directory)')
-    parser.add_option('-e', '--end-column', dest='endCol',
-                      help='The column containing the position of the end of the feature. (Required, one-based.)')
+    parser.add_option('-e', '--end-column', dest='endCol', default='5',
+                      help='The column containing the position of the end of the feature. (Optional, one-based. Default: 5, the GTF standard column.)')
     parser.add_option('-n', '--near', dest='near',
                       help='Report if a feature position is within near bases of an indel. (Optional, default is no report.)')
     parser.add_option('-o', '--output-file', dest='ofn',
@@ -49,8 +49,8 @@ def parseOptions():
                       help='Comma-separated list of other columns with positions to be adjusted. (Optional, one-based.)')
     parser.add_option('-q', '--quiet', dest='quiet', action='store_true',
                       help='Operate quietly. Do not report chromosomes and contigs not in the Indel vcf file.')
-    parser.add_option('-s', '--start-column', dest='startCol',
-                      help='The column containing the position of the end of the feature. (Required, one-based.)')
+    parser.add_option('-s', '--start-column', dest='startCol', default="4",
+                      help='The column containing the position of the end of the feature. (Optional, one-based. Default: 4, the GTF standard column.)')
     parser.add_option('-t', '--type-column', dest='typeCol',
                       help='Column with feature type info. (Optional, one-based.)')
 
@@ -58,7 +58,7 @@ def parseOptions():
 
     errors = ''
     if len(args) != 2:
-        errors += 'You must specify the input annotation file and strain!'
+        errors += 'You must specify the input annotation file and strain'
 
     # Sanity check our options and arguments.
     # Mandatory options are reference, indels and snps
@@ -68,9 +68,6 @@ def parseOptions():
         errors += '\n    You must specify the start position column.'
     if not opts.endCol:
         errors += '\n    You must specify the end position column.'
-    strains = ['129P2', '129S1', '129S5', 'A_J', 'AKR', 'BALB', 'C3H', 'C57BL', 'CAST', 'CBA', 'DBA', 'LP_J', 'NOD', 'NZO', 'PWK', 'SPRET', 'WSB']
-    if not args[1] in strains:
-        errors += '\n    The strain you specified: ' + strain + ' is not a supported strain.'
     if errors:
         parser.error(errors)
     return (opts, args)
@@ -281,8 +278,7 @@ def processLine(line, chrCol, startCol, endCol, posCols, chrOffs, chrKeys, typeC
 
 
 def updateHeader(strain, outf):
-    print >> outf, '# The coordinates in this file have been adjusted for strain %s' % strain
-    print >> outf, "# based on Sanger's short Indel vcf file for that strain."
+    print >> outf, '# The coordinates in this file have been adjusted for %s' % strain
     print >> outf, '# This file is based on:\n#'
 
 

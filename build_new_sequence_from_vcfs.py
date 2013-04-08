@@ -64,14 +64,28 @@ def parseOptions():
 
 class Reference:
     # Even though it is not coded as one this is in fact a singleton.
-    def __init__(self, inF):
-        self.contigs = ['Y']
+    def __init__(self, chrs, inF):
+        self.chrs = chrs
+        # FIXME DEBUG
+        print >> sys.stderr, chrs
         self.nextChr = ''
         self.currChr = ''
         self.chrLine = ''
         self.chrSeq = ''
         self.file=open(inF)
         self.inRewindSearch = False
+
+
+
+    # FIXME DEBUG
+    aksdebug = None
+    def printChrs(self, msg):
+        if not Reference.aksdebug:
+            Reference.aksdebug = open('AKS_DEBUG.txt', 'w')
+        print >> Reference.aksdebug, msg, self.chrs
+        print >> sys.stderr, msg, self.chrs
+
+
 
     def findChr(self, chr):
         # Set up to read a particular chr
@@ -98,18 +112,14 @@ class Reference:
                 # >chr1
                 # NCBI has:
                 # >1 dna:chromosome chromosome...
-                # We'll isolate the chromosome name, and:
-                #    1. If it is a contig ('NT_') stash the name for later flushing
-                #    2. Treat M and MT as contig (because mm9 has it, NCBI doesn't).
-                #    3. Stash the original line so we can output it.
+                # We'll isolate the chromosome name, and stash the original
+                # line so we can output it.
                 #
                 line = line.rstrip()
                 thisChr = line[1:]
                 if thisChr[:3] == 'chr':
                     thisChr = thisChr[3:]
                 thisChr = thisChr.split(' ')[0]
-                if (thisChr[:3] == 'NT_' or thisChr[0] == 'M') and thisChr not in self.contigs :
-                    self.contigs.append(thisChr)
                 self.chrLine = '>' + str(thisChr)
                 if thisChr == chr:
                     self.nextChr = thisChr
@@ -149,6 +159,16 @@ class Reference:
         # beg and end+1.
         #
         if chr != self.currChr:
+            if chr in self.chrs:
+                # Indicate that we've seen this chr, by removing it
+                # from the chrs list.  Then at the end, we'll output 
+                # without modifications all those chrs we didn't see
+                # while processing the SNPs and indels.
+                del(self.chrs[self.chrs.index(chr)])
+
+                # FIXME DEBUG
+                self.printChrs("Removing chr" + chr)
+
             self.readChr(chr)
         return self.chrSeq[beg-1:end]
 
@@ -272,19 +292,29 @@ class Indel:
     def __lt__(self, snp):
         if isinstance(snp, Snp):
             if self.chr != snp.chr:
-                # Currently, the Sanger files contain chrs 1-19 and X, in that
-                # order.
+                # Currently, the VCF files SEEM TO contain chrs 1-N and X, Y, in that
+                # order.  THIS PROGRAM ASSUMES THAT'S TRUE...  Hope so.
                 try:
                     return int(self.chr) < int(snp.chr)
                 except ValueError:
-                    # One is an alphabetic chr name.
-                    # make sure not M or Y; these are females!
-                    if self.chr[0] in 'MY':
-                        print >> sys.stderr, 'ERROR: Found unexpected chromosome', self.chr
-                    if snp.chr[0] in 'MY':
-                        print >> sys.stderr, 'ERROR: Found unexpected chromosome', snp.chr
-                    # One is an X  It is the greater one.
-                    return snp.chr == 'X'
+                    # One or both is an alphabetic chr name.
+                    # Figure out whether either is numeric. It is "less"
+                    try:
+                        int(self.chr)
+                        # If we get here, then we are less. (self is numeric,
+                        # so snp has to be alphabetic, which we regard as
+                        # greater.)
+                        return True
+                    except:
+                        pass
+                    try:
+                        int(snp.chr)
+                        # And if we get here, self is greater.
+                        return False
+                    except:
+                        Pass
+                    # Both were alphabetic.  Do simple string sort.
+                    return self.chr < snp.chr
 
             # Same chr, return based on position, already ints.
             return self.position < snp.position
@@ -343,19 +373,29 @@ class Snp:
     def __lt__(self, indel):
         if isinstance(indel, Indel):
             if self.chr != indel.chr:
-                # Currently, the Sanger files contain chrs 1-19 and X, in that
-                # order.
+                # Currently, the VCF files SEEM TO contain chrs 1-N and X, Y, in that
+                # order.  THIS PROGRAM ASSUMES THAT'S TRUE...  Hope so.
                 try:
                     return int(self.chr) < int(indel.chr)
                 except ValueError:
-                    # One is an alphabetic chr name.
-                    # make sure not M or Y; these are females!
-                    if self.chr[0] in 'MY':
-                        print >> sys.stderr, 'ERROR: Found unexpected chromosome', self.chr
-                    if indel.chr[0] in 'MY':
-                        print >> sys.stderr, 'ERROR: Found unexpected chromosome', indel.chr
-                    # One is an X  It is the greater one.
-                    return indel.chr == 'X'
+                    # One or both is an alphabetic chr name.
+                    # Figure out whether either is numeric. It is "less"
+                    try:
+                        int(self.chr)
+                        # If we get here, then we are less. (self is numeric,
+                        # so indel has to be alphabetic, which we regard as
+                        # greater.)
+                        return True
+                    except:
+                        pass
+                    try:
+                        int(indel.chr)
+                        # And if we get here, self is greater.
+                        return False
+                    except:
+                        Pass
+                    # Both were alphabetic.  Do simple string sort.
+                    return self.chr < snp.chr
 
             # Same chr, return based on position, already ints.
             return self.position < indel.position
@@ -511,25 +551,58 @@ def finishChromosome(ref, chr, nextRefPos):
     prettyizeSequence('')
 
 
-def finishUp(ref):
+def finishUp(ref, chrs):
     global currentChr, chrInfo, offsetFile, outputFile
 
     # We've finished the last events in the files.  Close out
     # the last chr we were processing.
     finishChromosome(ref, currentChr, chrInfo[currentChr]['nextRefPos'])
 
-    # Sanger sequenced females only.  No chrY; take it from the reference.
-    # Y is artificially contained in the list of contigs, so we only have
-    # to iterate over that.
-    contigs = ref.contigs
-    for contig in contigs:
-        ref.findChr(contig)
+    # We've now output all of every chromosome that had a SNP or Indel.
+    # But there could have been chromosomes without one; they aren't
+    # output yet. (These may be unplaced contigs as well as complete
+    # chromosomes.)
+    # But they are listed in the list "chrs". So we'll output all of
+    # those now.
+    # FIXME DEBUG
+    ref.printChrs("in Finishup")
+    # The code that we're going to call in the loop below manipulated the
+    # list by deleting elements.  That makes the loop unreliable, and the
+    # walk misses some elements.  Make a private copy of the list, so that
+    # it isn't messed with.
+    chrsLocal = []
+    for chr in chrs:
+        chrsLocal.append(chr)
+    for chr in chrsLocal:
+        ref.findChr(chr)
         print >> outputFile, ref.chrLine
-        seq = ref.getRange(contig, 1, 99999999999)
+        seq = ref.getRange(chr, 1, 99999999999)
         if len(seq) > 0:
             prettyizeSequence(seq)
         prettyizeSequence('')
 
+def enumerateChrs(chrs, ref, outDir):
+    # It may be the case that some chromosomes don't have an indel or SNP.
+    # We're outputting sequence to the new "reference" based on the processing
+    # of those files.  To make sure we don't omit any chromosomes, we need
+    # to know what chrs are in the reference.  So we'll make a quick scan
+    # of the reference and record all the chrs we find.  To help the companion
+    # program adjust_annotations.py which needs the same information, we'll 
+    # also record the list in a file.
+    of = open(os.path.join(outDir, 'foundChromsomes.txt'), 'w')
+    for line in open(ref):
+        if line[0] == '>':
+            # Trim off the '>' or '>chr' and newline
+            if line[:4] == '>chr':
+                chr = line[4:-1]
+            else:
+                chr = line[1:-1]
+            # Some fasta files (e.g., NCBI) have more information after the 
+            # chromosome name.  Strip it off.
+            chr = chr.split(' ')[0]
+            chrs.append(chr)
+            print >> of, chr
+    of.close()
 
 outputFile = None
 def main():
@@ -537,8 +610,11 @@ def main():
     opts, args = parseOptions()
     strain = args[0]
 
+    # Track the chromosomes in this organism
+    chrs = []
+
     # Open our files...
-    ref = Reference(opts.reference)
+    ref = Reference(chrs, opts.reference)
     indels = open(opts.indels)
     snps = open(opts.snps)
     dir = opts.dir
@@ -546,6 +622,10 @@ def main():
         outputFile = open(os.path.join(dir, opts.output), 'w')
     else:
         outputFile = sys.stdout
+
+    # First, prepare for program adjust_annotations.py by getting all the
+    # chromosomes.
+    enumerateChrs(chrs, opts.reference, dir)
 
     # Prepare for processing the indels file
     # Skip the indels vcf header cruft
@@ -606,6 +686,6 @@ def main():
         processRemaining(ref, indels, iStrainCol, strain, True, dir)
 
     # That's about it!
-    finishUp(ref)
+    finishUp(ref, chrs)
 
 main()
