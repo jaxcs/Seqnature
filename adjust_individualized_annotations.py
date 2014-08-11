@@ -51,7 +51,7 @@ def debug(msg):
         print >> sys.stderr, msg
 
 def parseOptions():
-    usage = 'USAGE: %prog [options] annotation-file DO-identifier L-or-R'
+    usage = 'USAGE: %prog [options] annotation-file DO-identifier'
 
     parser = OptionParser(usage=usage, version="0.1")
 
@@ -61,16 +61,16 @@ def parseOptions():
                       help='File to write adjustment comments to. (Default: no comments file.)')    
     parser.add_option('-d', '--dir', dest='dir', default='.',
                       help='path to directory containing offset files (default: current directory)')
-    parser.add_option('-e', '--end-column', dest='endCol', default='5', 
-                      help='The column containing the position of the end of the feature. (Optional, one-based. Default: 5, the GTF standard column.)')
+    parser.add_option('-e', '--end-column', dest='endCol',
+                      help='The column containing the position of the end of the feature. (Required, one-based.)')
     parser.add_option('-n', '--near', dest='near',
                       help='Report if a feature position is within near bases of an indel. (Optional, default is no report.)')
     parser.add_option('-o', '--output-file', dest='ofn',
                       help='Output filename (Optional, default: stdout)')
     parser.add_option('-p', '--position-columns', dest='posCols',
                       help='Comma-separated list of other columns with positions to be adjusted. (Optional, one-based.)')
-    parser.add_option('-s', '--start-column', dest='startCol', default='4',
-                      help='The column containing the position of the end of the feature. (Optional, one-based. Default: 4, the GTF standard column.)')
+    parser.add_option('-s', '--start-column', dest='startCol',
+                      help='The column containing the position of the end of the feature. (Required, one-based.)')
     parser.add_option('-t', '--type-column', dest='typeCol',
                       help='Column with feature type info. (Optional, one-based.)')
     parser.add_option('-x', '--extents', dest='extents',

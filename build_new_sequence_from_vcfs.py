@@ -29,7 +29,7 @@ from optparse import OptionParser
 def parseOptions():
     usage = 'USAGE: %prog [options] strain\n    Strain must be a column header in the two VCF files.'
 
-    parser = OptionParser(usage=usage, version="1.0")
+    parser = OptionParser(usage=usage, version="1.1")
 
     parser.add_option('-d', '--output-dir', dest='dir', default='.',
                       help='Directory for output files (must already exist). (Default: current working directory.)')
@@ -37,6 +37,8 @@ def parseOptions():
                       help='path to indels vcf file')
     parser.add_option('-o', '--output', dest='output',
                       help='File into which the genome is written. (Default: stdout)')
+    parser.add_option('-p', '--pass-only', dest='pass_only', action='store_true', default=False,
+                      help='Only include calls that passed the filtering parameters used to create the vcf file.')
     parser.add_option('-r', '--reference', dest='reference',
                       help='Path to the reference file used as the base.')
     parser.add_option('-s', '--snps', dest='snps',
@@ -66,8 +68,6 @@ class Reference:
     # Even though it is not coded as one this is in fact a singleton.
     def __init__(self, chrs, inF):
         self.chrs = chrs
-        # FIXME DEBUG
-        print >> sys.stderr, chrs
         self.nextChr = ''
         self.currChr = ''
         self.chrLine = ''
@@ -77,7 +77,7 @@ class Reference:
 
 
 
-    # FIXME DEBUG
+    # This is used by debugging code that is normally commented out.
     aksdebug = None
     def printChrs(self, msg):
         if not Reference.aksdebug:
@@ -167,7 +167,7 @@ class Reference:
                 del(self.chrs[self.chrs.index(chr)])
 
                 # FIXME DEBUG
-                self.printChrs("Removing chr" + chr)
+                #self.printChrs("Removing chr" + chr)
 
             self.readChr(chr)
         return self.chrSeq[beg-1:end]
@@ -212,10 +212,14 @@ class Result:
 #
 class Indel:
     def __init__(self, file, column):
+        global opts
         # Get the next line in the file with a call for this strain.
         # Return a list of the tab-sep line 
+        # Column 6 (the 7th column) is the FILTER column, which records
+        # whether or not the call passed all the filtering criteria
+        # at the time the VCF file wass created.
         first = True
-        while first or parts[column] == '.':
+        while first or (opts.pass_only and parts[6] != 'PASS') or parts[column] == '.':
             line = file.readline()
             if len(line) == 0:
                 # We've reached EOF.
@@ -235,7 +239,9 @@ class Indel:
         parts1 = call.split(':')
         parts2 = parts1[0].split('/')
         if parts2[0] != parts2[1]:
-            print >> sys.stderr, 'het call found at chr' + chr, 'position', position, call, 'Using first allele.'
+            print >> sys.stderr, 'het call found at chr{0} position' \
+                                 ' {1}: {2} Using first allele.' \
+                                 .format(self.chr, position, call)
         #Calls use 1-based allele references.
         try:
             self.allele = alleles[int(parts2[0])-1]
@@ -332,10 +338,12 @@ class Indel:
 #     nextRefPos - position + 1 (pseudo member)
 class Snp:
     def __init__(self, file, column):
+        global opts
         # Get the next line in the file with a call for this strain.
         # Return a list of the tab-sep line 
+        # Column 6 is the FILTER column.  See Indel.__init__().
         exclude = True
-        while exclude:
+        while exclude or (opts.pass_only and parts[6] != 'PASS'):
             line = file.readline()
             if len(line) == 0:
                 # We've reached EOF.
@@ -347,7 +355,9 @@ class Snp:
             callParts = call.split(':')
             #
             # The ATG field is callParts[1].  We're not interested in 0.
-            exclude = callParts[1] != '1'
+            # This field can be '.', in which case we skip the line.
+            exclude = ( len(callParts) < 2 or
+                        callParts[1] != '1')
 
         # Now we have a line with a snp for this strain.
         self.chr = parts[0]
@@ -564,8 +574,10 @@ def finishUp(ref, chrs):
     # chromosomes.)
     # But they are listed in the list "chrs". So we'll output all of
     # those now.
+
     # FIXME DEBUG
-    ref.printChrs("in Finishup")
+    #ref.printChrs("in Finishup")
+
     # The code that we're going to call in the loop below manipulated the
     # list by deleting elements.  That makes the loop unreliable, and the
     # walk misses some elements.  Make a private copy of the list, so that
@@ -605,8 +617,9 @@ def enumerateChrs(chrs, ref, outDir):
     of.close()
 
 outputFile = None
+opts = None
 def main():
-    global outputFile
+    global outputFile, opts
     opts, args = parseOptions()
     strain = args[0]
 

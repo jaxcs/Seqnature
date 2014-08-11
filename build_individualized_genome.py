@@ -45,13 +45,22 @@ def parseOptions():
     parser.add_option('-c', '--control', dest='control',
                       help='path to control file')
     parser.add_option('-d', '--output-dir', dest='dir', default='.',
-                      help='Directory for output files (must already exist). (Default: current working directory.)')
+                      help='Directory for output files (must already '
+                           'exist). (Default: current working directory.)')
     parser.add_option('-i', '--indels', dest='indels',
                       help='path to indels vcf file')
     parser.add_option('-o', '--output-sequence', dest='output',
-                      help='File (fasta) into which to write the sequence. (Default: stdout)')
+                      help='File (fasta) into which to write the '
+                           'sequence. (Default: stdout)')
+    parser.add_option('-p', '--pass-only', dest='pass_only',
+                      action='store_true', default=False,
+                      help='Only include calls that passed the filtering '
+                           'parameters used to create the vcf file.')
     parser.add_option('-r', '--reference', dest='reference',
-                      help='Base name of the reference file that has been preprocessed by reconstruct_NCBI.py, e.g., /some/path/to/NCBIM37; not /path/NCBIM37_ordered.fa')
+                      help='Base name of the reference file that has been '
+                           'preprocessed by reconstruct_NCBI.py, e.g., '
+                           '/some/path/to/NCBIM37; not '
+                           '/path/NCBIM37_ordered.fa')
     parser.add_option('-s', '--snps', dest='snps',
                       help='Path to the snps vcf file')
 
@@ -81,7 +90,8 @@ def parseOptions():
 
 # A common class for getting info from snps and indels.
 class Result:
-    def __init__(self, chr, pos, ref, allele, change, nextRefPos, line, isIndel):
+    def __init__(self, chr, pos, ref, allele, change,
+                 nextRefPos, line, isIndel):
         self.chr = chr
         self.pos = pos
         self.ref = ref
@@ -92,7 +102,10 @@ class Result:
         self.isIndel = isIndel
 
     def __str__(self):
-        return ('I: ' if self.isIndel else 'S: ') + self.chr + ":" + str(self.pos) + ' ' + self.ref + '->' + self.allele + '(' + str(self.change) + ') nrp:' + str(self.nextRefPos) + '\n' + self.line
+        return ('I: ' if self.isIndel else 'S: ') + self.chr + ":" + \
+               str(self.pos) + ' ' + self.ref + '->' + self.allele + \
+               '(' + str(self.change) + ') nrp:' + str(self.nextRefPos) + \
+               '\n' + self.line
 
 
 #
@@ -117,6 +130,7 @@ class Result:
 #                reference.
 #
 class Indel:
+    global opts
     strainTracker=None
     @staticmethod
     def setStrainTracker(st):
@@ -137,8 +151,10 @@ class Indel:
             position = int(parts[1])
             column = Indel.strainTracker.getStrainColumn(chr, position)
             # When the strain is C57BL/6J (indicated by column number
-            # -1), we don't use any SNPs from the Sanger file.
-            if column != -1 and parts[column] != '.':
+            # -1), we don't use any indels from the Sanger file.
+            # column[6] is the filter column
+            if column != -1 and parts[column] != '.' and \
+                    (!opts.pass or parts[6] == 'PASS')
                 break
 
         # Now we have a line with an indel for this strain.
@@ -152,7 +168,9 @@ class Indel:
         parts1 = call.split(':')
         parts2 = parts1[0].split('/')
         if parts2[0] != parts2[1]:
-            print >> sys.stderr, 'het call found at chr' + chr, 'position', position, call, 'Using first allele.'
+            print >> sys.stderr, 'het call found at chr{0} position' \
+                                 ' {1}: {2} Using first allele.' \
+                                 .format(self.chr, position, call)
         #Calls use 1-based allele references.
         try:
             self.allele = alleles[int(parts2[0])-1]
@@ -164,8 +182,8 @@ class Indel:
         #
         # The way the Sanger VCFs are created, the first base in both the
         # reference and the allele will be the same. Further bases _may_
-        # be the same. Make position be the first different base and fix up the
-        # allele to not contain the common bases.
+        # be the same. Make position be the first different base and fix
+        # up the allele to not contain the common bases.
         allele = self.allele
         minLen = min(len(ref), len(allele))
         diffPos = 0
@@ -200,11 +218,13 @@ class Indel:
         self.nextRefPos = self.position + len(self.ref)
 
     def toResult(self):
-        return Result(self.chr, self.position, self.ref, self.allele, self.change, 
-                      self.nextRefPos, self.line, True)
+        return Result(self.chr, self.position, self.ref, self.allele,
+                      self.change, self.nextRefPos, self.line, True)
 
     def __str__(self):
-        return self.chr + ':' + str(self.position) + ' ' + self.ref + '->' + self.allele + ' ' + str(self.change) + ' ' + str(self.nextRefPos)
+        return self.chr + ':' + str(self.position) + ' ' + self.ref + \
+               '->' + self.allele + ' ' + str(self.change) + ' ' + \
+               str(self.nextRefPos)
 
     def __lt__(self, snp):
         if isinstance(snp, Snp):
@@ -217,9 +237,11 @@ class Indel:
                     # One is an alphabetic chr name.
                     # make sure not M or Y; these are females!
                     if self.chr[0] in 'MY':
-                        print >> sys.stderr, 'ERROR: Found unexpected chromosome', self.chr
+                        print >> sys.stderr, \
+                            'ERROR: Found unexpected chromosome', self.chr
                     if snp.chr[0] in 'MY':
-                        print >> sys.stderr, 'ERROR: Found unexpected chromosome', snp.chr
+                        print >> sys.stderr, \
+                            'ERROR: Found unexpected chromosome', snp.chr
                     # One is an X  It is the greater one.
                     return snp.chr == 'X'
 
@@ -244,6 +266,7 @@ class Snp:
         Snp.strainTracker = st
 
     def __init__(self, file):
+        global opts
         # Get the next line in the file with a call for this strain.
         # Return a list of the tab-sep line 
         while True:
@@ -259,14 +282,17 @@ class Snp:
             column = Snp.strainTracker.getStrainColumn(chr, position)
             # When the strain is C57BL/6J (indicated by column number
             # -1), we don't use any SNPs from the Sanger file.
-            if column == -1:
+            # column[6] is the filter column
+            if column == -1 or parts[column] == '.' or \
+                    (opts.pass and parts[6] != 'PASS')
                 continue
             call = parts[column]
             callParts = call.split(':')
             #
             # The ATG field is callParts[1].  We're not interested in
-            # 0 or negative--only 1.
-            if callParts[1] == '1':
+            # 0 or negative--only 1.  Can also be '.', in which case
+            # parts is only one element long.
+            if len(call_parts) > 1 and callParts[1] == '1':
                 break
 
         # Now we have a line with a snp for this strain.
@@ -280,12 +306,16 @@ class Snp:
         try:
             whichAllele = int(alleles[0])-1
         except:
-            print >> sys.stderr, '\n\n\n\ngot allele', alleles[0], 'call', call, 'line', line
+            print >> sys.stderr, '\n\n\n\ngot allele', alleles[0], \
+                'call', call, 'line', line
             sys.exit(1)
         try:
             self.allele = parts[4].split(',')[whichAllele]
         except IndexError:
-            print >> sys.stderr, '\n\nAllele lookup failed.\n    Allele field =', parts[4], '\ncall parts =', callParts, '\nwhichAllele =', whichAllele
+            print >> sys.stderr, '\n\nAllele lookup failed.\n    ' \
+                                 'Allele field =', parts[4], '\ncall ' \
+                                 'parts =', callParts, '\nwhichAllele =', \
+                                 whichAllele
             sys.exit(1)
 
     def toResult(self):
@@ -293,7 +323,8 @@ class Snp:
                       self.position+1, self.line, False)
 
     def __str__(self):
-        return self.chr + ':' + str(self.position) + ' ' + self.ref + '->' + self.allele
+        return self.chr + ':' + str(self.position) + ' ' + self.ref + \
+               '->' + self.allele
 
     def __lt__(self, indel):
         if isinstance(indel, Indel):
@@ -306,9 +337,11 @@ class Snp:
                     # One is an alphabetic chr name.
                     # make sure not M or Y; these are females!
                     if self.chr[0] in 'MY':
-                        print >> sys.stderr, 'ERROR: Found unexpected chromosome', self.chr
+                        print >> sys.stderr, \
+                            'ERROR: Found unexpected chromosome', self.chr
                     if indel.chr[0] in 'MY':
-                        print >> sys.stderr, 'ERROR: Found unexpected chromosome', indel.chr
+                        print >> sys.stderr, \
+                            'ERROR: Found unexpected chromosome', indel.chr
                     # One is an X  It is the greater one.
                     return indel.chr == 'X'
 
@@ -348,7 +381,8 @@ class StrainTracker:
         parts = line.split(',')
         self.nextChr = parts[0].strip(' \t')
         if self.nextChr != self.chr:
-            print >> sys.stderr, 'ERROR: not prepared for a chr change on the second line!'
+            print >> sys.stderr, 'ERROR: not prepared for a chr change ' \
+                                 'on the second line!'
             sys.exit(1)
         self.high = int(parts[1].strip(' \t'))
         self.nextStrain = self.strainColumn(parts[2].strip(' \t\r\n'))
@@ -356,7 +390,8 @@ class StrainTracker:
 
     def nextChunk(self):
         if self.eof:
-            print >> sys.stderr, 'ERROR Called nextChunk after we had already hit eof...'
+            print >> sys.stderr, 'ERROR Called nextChunk after we had ' \
+                                 'already hit eof...'
             sys.exit(1)
 
         # Promote "next" to "current"
@@ -401,7 +436,8 @@ class StrainTracker:
 
         # Rather than use a hash, we're going to index into a table
         # using the ordinals of the code letters.
-        strainNames = ['A_J', 'C57BL', '129S1', 'NOD', 'NZO', 'CAST', 'PWK', 'WSB']
+        strainNames = ['A_J', 'C57BL', '129S1', 'NOD', 'NZO', 'CAST',
+                       'PWK', 'WSB']
         for n in range(len(strainNames)):
             self.columns.append(header.index(strainNames[n]))
         self.columns[1] = -1 # FLAG: for C57BL/6J, we're using the reference,
@@ -411,7 +447,8 @@ class StrainTracker:
         try:
             col =  self.columns[ord(strain) - StrainTracker.ordA]
         except:
-            print >> sys.stderr, 'range exception', strain, ord(strain), ord(strain) - StrainTracker.ordA, self.columns
+            print >> sys.stderr, 'range exception', strain, ord(strain), \
+                ord(strain) - StrainTracker.ordA, self.columns
             sys.exit(1)
         return col
     
@@ -421,7 +458,8 @@ class StrainTracker:
         if pos < self.low:
             # I think that this means something is out of order.
             # Report it and bail.
-            print >> sys.stderr, "Pos below current low point. Ordering problem?"
+            print >> sys.stderr, "Pos below current low point. " \
+                                 "Ordering problem?"
             sys.exit(1)
         while pos >= self.high:
             self.nextChunk()
@@ -471,9 +509,10 @@ outputPos = 0
 # chromosome(s).
 #
 
-# Include '' to handle the initial case. Include a tombstone/known elephant 'Done' to handle
-# emitting X.
-chrsInOrder=['', '1', '2', '3', '4', '5', '6', '7', '8','9', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', 'X', 'Done']
+# Include '' to handle the initial case. Include a tombstone/known
+# elephant 'Done' to handle emitting X.
+chrsInOrder=['', '1', '2', '3', '4', '5', '6', '7', '8','9', '10', '11',
+             '12', '13', '14', '15', '16', '17', '18', '19', 'X', 'Done']
 
 def skippedChrs(old, new, ref, lr):
     oIdx = chrsInOrder.index(old)
@@ -492,7 +531,8 @@ def skippedChrs(old, new, ref, lr):
 
 
 def processAnEvent(ref, res, animalId):
-    global currentChr, chrInfo, offsetFile, indelsProcessed, outputPos, lr, DEBUG
+    global currentChr, chrInfo, offsetFile, indelsProcessed, outputPos, \
+        lr, DEBUG
 
     if currentChr == '':
         offset = 0
@@ -508,7 +548,8 @@ def processAnEvent(ref, res, animalId):
         if offsetFile:
             # If we have an offsetFile, we have been processing a
             # chr.  Flush the previous chr's remaining sequence.
-            finishChromosome(ref, currentChr, chrInfo[currentChr]['nextRefPos'])
+            finishChromosome(ref, currentChr,
+                             chrInfo[currentChr]['nextRefPos'])
             offsetFile.close()
 
         if res.chr in chrInfo:
@@ -526,13 +567,14 @@ def processAnEvent(ref, res, animalId):
         thisChrInfo['currOffset'] = 0
         chrInfo[res.chr] = thisChrInfo
         currentChr = res.chr
-        # Find this chr in the reference now.  This will get us the chromosome line
-        # for us to print out.
+        # Find this chr in the reference now.  This will get us the
+        # chromosome line for us to print out.
         ref.findChr(currentChr)
         print ref.chrLine + lr
 
         outputPos = 0
-        offsetFile = open(animalId + '_offsets_chr' + str(res.chr) + '.txt', mode)
+        offsetFile = open(animalId + '_offsets_chr' + str(res.chr) +
+                          '.txt', mode)
 
     # End of processing for chr changeover...
 
@@ -547,7 +589,8 @@ def processAnEvent(ref, res, animalId):
     # in a previous del (129S1 chr1 19525839 deletes 19525840-19525879, and 
     # 19525878 deletes 19525879 )  Check for other instances of this event.
     if res.pos < int(thisChrInfo['nextRefPos']):
-        print >> sys.stderr, 'skipping event; too early: \n', res.line, '\nevent =', res.pos, 'nextRefPos =', thisChrInfo['nextRefPos']
+        print >> sys.stderr, 'skipping event; too early: \n', res.line, \
+            '\nevent =', res.pos, 'nextRefPos =', thisChrInfo['nextRefPos']
         # Don't to anything with this event.  But before we go, check
         # for edge conditions.  If we find anything unusual, (e.g.,
         # incomplete overlap) report and exit.
@@ -570,7 +613,9 @@ def processAnEvent(ref, res, animalId):
         print >> offsetFile, '%s\t%d' % (res.pos, thisChrInfo['currOffset'])
 
     if outputPos != (res.nextRefPos + thisChrInfo['currOffset'] - 1):
-        print >> sys.stderr, '\noutputPos error: oP =', outputPos, 'res.pos:', res.pos, 'res.nextRefPos = ', res.nextRefPos, '+', thisChrInfo['currOffset']
+        print >> sys.stderr, '\noutputPos error: oP =', outputPos, \
+            'res.pos:', res.pos, 'res.nextRefPos = ', res.nextRefPos, '+', \
+            thisChrInfo['currOffset']
         outputError = True
 
     #print >> sys.stderr, 'op:', outputPos, 'off:', thisChrInfo['currOffset']
@@ -624,8 +669,8 @@ def finishUp(ref, reference, male, lr):
     skippedChrs(currentChr, 'Done', ref, lr)
 
     # We're done with the contigs for which Sanger had variant information.
-    # If this is the 'R' pass, we need to append the unplaced contigs ("NT_*"),
-    # MT, and Y if this sample is male.
+    # If this is the 'R' pass, we need to append the unplaced contigs ,
+    #("NT_*") MT, and Y if this sample is male.
     if lr == 'L':
         return
     if male:
@@ -636,8 +681,9 @@ def finishUp(ref, reference, male, lr):
 
 lr = ''
 outputFile = sys.stdout
+opts = None
 def main():
-    global lr, outputFile
+    global lr, outputFile, opts
 
     opts, args = parseOptions()
     lr = args[1]

@@ -25,6 +25,7 @@
 
 import sys
 import os
+import glob
 from optparse import OptionParser
 import bisect
 
@@ -34,34 +35,47 @@ def parseOptions():
     parser = OptionParser(usage=usage, version="0.1")
 
     parser.add_option('-c', '--chr-column', dest='chrCol',
-                      help='Column with chromosome info. (Required, one-based.)')
+                      help='Column with chromosome info. (Required, '
+                           'one-based.)')
     parser.add_option('-C', '--comments-file', dest='comments',
-                      help='File to write adjustment comments to. (Default: no comments file.)')
+                      help='File to write adjustment comments to. ('
+                           'Default: no comments file.)')
     parser.add_option('-d', '--directory', dest='dir', default='.',
-                      help='path to directory containing offset files (default: current directory)')
-    parser.add_option('-e', '--end-column', dest='endCol', default='5',
-                      help='The column containing the position of the end of the feature. (Optional, one-based. Default: 5, the GTF standard column.)')
+                      help='path to directory containing offset files '
+                           '(default: current directory)')
+    parser.add_option('-e', '--end-column', dest='endCol',
+                      help='The column containing the position of the '
+                           'end of the feature. (Required, one-based.)')
     parser.add_option('-n', '--near', dest='near',
-                      help='Report if a feature position is within near bases of an indel. (Optional, default is no report.)')
+                      help='Report if a feature position is within '
+                           'near bases of an indel. (Optional, '
+                           'default is no report.)')
     parser.add_option('-o', '--output-file', dest='ofn',
                       help='Output filename (Optional, default: stdout)')
     parser.add_option('-p', '--position-columns', dest='posCols',
-                      help='Comma-separated list of other columns with positions to be adjusted. (Optional, one-based.)')
+                      help='Comma-separated list of other columns '
+                           'with positions to be adjusted. (Optional, '
+                           'one-based.)')
     parser.add_option('-q', '--quiet', dest='quiet', action='store_true',
-                      help='Operate quietly. Do not report chromosomes and contigs not in the Indel vcf file.')
-    parser.add_option('-s', '--start-column', dest='startCol', default="4",
-                      help='The column containing the position of the end of the feature. (Optional, one-based. Default: 4, the GTF standard column.)')
+                      help='Operate quietly. Do not report '
+                           'chromosomes and contigs not in the Indel '
+                           'vcf file.')
+    parser.add_option('-s', '--start-column', dest='startCol',
+                      help='The column containing the position of the '
+                           'end of the feature. (Required, one-based.)')
     parser.add_option('-t', '--type-column', dest='typeCol',
-                      help='Column with feature type info. (Optional, one-based.)')
+                      help='Column with feature type info. (Optional, '
+                           'one-based.)')
 
     (opts, args) = parser.parse_args()
 
     errors = ''
     if len(args) != 2:
-        errors += 'You must specify the input annotation file and strain'
+        errors += 'You must specify the input annotation file and strain!'
 
     # Sanity check our options and arguments.
-    # Mandatory options are reference, indels and snps
+    # Mandatory options are reference, indels and snps and the start,
+    # end and chromosome columns.
     if not opts.chrCol:
         errors += '\n    You must specify a chromosome column.'
     if not opts.startCol:
@@ -73,16 +87,11 @@ def parseOptions():
     return (opts, args)
 
 def readOffsets(dir, strain):
-    chrs = []
-    for n in range(1,20):
-        chrs.append(str(n))
-    chrs.append('X')
+    flist = glob.glob(os.path.join(dir, '%s_offsets_chr*.txt' % strain))
     
     chrOffs = {}
     chrKeys = {}
-    for chr in chrs:
-        fn = '%s_offsets_chr%s.txt' % (strain, chr)
-        fp = os.path.join(dir, fn)
+    for fp in flist:
         try:
             f = open(fp)
             f.close()
@@ -99,6 +108,8 @@ def readOffsets(dir, strain):
                 continue
             offsets[int(parts[0])] = int(parts[1])
             keys.append(int(parts[0]))
+        chr = os.path.splitext(os.path.basename(fp))[0]
+        chr = chr.split('chr')[-1]
         chrOffs[chr] = offsets
         chrKeys[chr] = sorted(keys)
 
@@ -129,22 +140,21 @@ def adjustPosition(pos, offsets, keys):
     
 
     # The new pos is pos + offset; the original (reference) pos is 'pos'.
-    #if pos == 5193483 or pos == 5194069:
-    #    print pos+ offset, pos, eventPos, inDeletion, offsetIdx, offset, offsetDelta
-    #    if pos == 5194069:
-    #        sys.exit()
     return pos + offset, pos, eventPos, inDeletion
 
-def checkNear(chr, startRef, endRef, refPos, adjPos, eventPos, featureType, near, outcf):
+def checkNear(chr, startRef, endRef, refPos, adjPos, eventPos,
+              featureType, near, outcf):
     if near and abs(refPos - eventPos) <= near:
         if type(adjPos) == type(''):
             print >> sys.stderr, 'ERROR Bad adjPos:', adjPos
             sys.exit(1)
-        #print >> sys.stderr, type(startRef), type(endRef), type(refPos), type(adjPos), type(near)
         if outcf:
             if featureType:
                 print >> outcf, featureType,
-            print >> outcf, '%s\t%d\t%d\t%d\t%d\tPosition near event (%d bases)' % (chr, startRef, endRef, refPos, adjPos, near)
+            print >> outcf, '{0}\t{1}\t{2}\t{3}\t{4}\tPosition near ' \
+                            'event ({5} bases)' \
+                            .format(chr, startRef,
+                                    endRef, refPos, adjPos, near)
 
 alreadyCommented = set()
 def doComment(feature, chr, start, end, ref, adj, format, comment, outcf):
@@ -165,7 +175,8 @@ def doComment(feature, chr, start, end, ref, adj, format, comment, outcf):
 
 otherChrs = []
 lineNo = 0
-def processLine(line, chrCol, startCol, endCol, posCols, chrOffs, chrKeys, typeCol, near, outf, outcf):
+def processLine(line, chrCol, startCol, endCol, posCols, chrOffs,
+                chrKeys, typeCol, near, outf, outcf):
     global otherChrs, quiet
     line = line.rstrip()
     parts = line.split('\t')
@@ -179,7 +190,9 @@ def processLine(line, chrCol, startCol, endCol, posCols, chrOffs, chrKeys, typeC
         if chr != "###" and chr not in otherChrs and not quiet:
             otherChrs.append(chr)
             # Print diagnostic that we're ignoring chrs, once per chr.
-            print >> sys.stdout, '# chromosome', chr, 'is not in the Sanger data; passing data through to the output file without adjusting the positions.'
+            print >> sys.stdout, '# chromosome', chr, \
+                'is not in the Sanger data; passing data through to ' \
+                'the output file without adjusting the positions.'
         print >> outf, line
         return
 
@@ -192,10 +205,12 @@ def processLine(line, chrCol, startCol, endCol, posCols, chrOffs, chrKeys, typeC
 
     # Process the start and end positions, then any extra positions.
     # for each perform some checks.
-    startNewPos, startRefPos, startEventPos, startInDeletion = adjustPosition(parts[startCol], offsets, keys)
+    startNewPos, startRefPos, startEventPos, startInDeletion = \
+            adjustPosition(parts[startCol], offsets, keys)
     
 
-    endNewPos, endRefPos, endEventPos, endInDeletion = adjustPosition(parts[endCol], offsets, keys)
+    endNewPos, endRefPos, endEventPos, endInDeletion = \
+            adjustPosition(parts[endCol], offsets, keys)
 
     if typeCol:
         featureType = parts[typeCol] + '\t'
@@ -208,7 +223,8 @@ def processLine(line, chrCol, startCol, endCol, posCols, chrOffs, chrKeys, typeC
         startNewPos = endNewPos = 0
         
         # and log it.
-        doComment(featureType, chr, startRefPos, endRefPos, '', '', '%s\t%d\t%d\t%s\t%s\t%s', 'Feature Deleted', outcf)
+        doComment(featureType, chr, startRefPos, endRefPos, '', '',
+                  '%s\t%d\t%d\t%s\t%s\t%s', 'Feature Deleted', outcf)
 
     else:
         # At least part of the feature is in the strain. Check for both the
@@ -221,38 +237,49 @@ def processLine(line, chrCol, startCol, endCol, posCols, chrOffs, chrKeys, typeC
             startNewPos = startEventPos + (startNewPos - startRefPos)
             # and log it.
             comment = 'Start in deletion, adjusted to first non-deleted base'
-            doComment(featureType, chr, startRefPos, endRefPos, startRefPos, startNewPos,
+            doComment(featureType, chr, startRefPos, endRefPos,
+                      startRefPos, startNewPos,
                       '%s\t%d\t%d\t%d\t%d\t%s', comment, outcf)
         if endInDeletion:
             # Adjust it to be the last base before the deletion.
             # Have to find out the offset between the strain and the reference just before this
             # event.
             testRefPos = endEventPos - 1;
-            testNewPos, testRefPos, testEventPos, testInDeletion = adjustPosition(testRefPos, offsets, keys)
+            testNewPos, testRefPos, testEventPos, testInDeletion = \
+                    adjustPosition(testRefPos, offsets, keys)
             # A quick sanity test.  Did we get a different offset?
             if (testNewPos - testRefPos) == (endNewPos - endRefPos):
-                print >> sys.stderr, 'ERROR: We came up with the same offset!', chr, startRefPos, endRefPos
+                print >> sys.stderr, 'ERROR: We came up with the same '\
+                        'offset!', chr, startRefPos, endRefPos
             endNewPos = testNewPos
             # and log it.
             comment = 'End in deletion, adjusted to last base before deletion'
-            doComment(featureType, chr, startRefPos, endRefPos, endRefPos, endNewPos,
-                      '%s\t%d\t%d\t%d\t%d\t%s', comment, outcf)
+            doComment(featureType, chr, startRefPos, endRefPos, endRefPos,
+                      endNewPos, '%s\t%d\t%d\t%d\t%d\t%s', comment,
+                      outcf)
 
     if startEventPos != endEventPos:
         comment = 'Feature contains indel'
-        doComment(featureType, chr, startRefPos, endRefPos, startRefPos, startNewPos,
-                  '%s\t%d\t%d\t%d\t%d\t%s', comment, outcf)
+        doComment(featureType, chr, startRefPos, endRefPos, startRefPos,
+                  startNewPos, '%s\t%d\t%d\t%d\t%d\t%s', comment,
+                  outcf)
 
     if endNewPos < startNewPos:
-        print >> sys.stderr, 'ERROR: end before start', chr + ':' + str(endNewPos), 'in feature at', str(startNewPos) + '-' + str(endNewPos), '(reference coords:', str(startRefPos) + '-' + str(endRefPos) + ')'
+        print >> sys.stderr, 'ERROR: end before start', chr + ':' + \
+                str(endNewPos), 'in feature at', str(startNewPos) + \
+                '-' + str(endNewPos), '(reference coords:', \
+                str(startRefPos) + '-' + str(endRefPos) + ')'
 
     # Check start and end for "nearness"
     if near:
-        checkNear(chr, startRefPos, endRefPos, startRefPos, startNewPos, startEventPos, featureType, near, outcf)
-        checkNear(chr, startRefPos, endRefPos, endRefPos, endNewPos, endEventPos, featureType, near, outcf)
+        checkNear(chr, startRefPos, endRefPos, startRefPos, startNewPos,
+                  startEventPos, featureType, near, outcf)
+        checkNear(chr, startRefPos, endRefPos, endRefPos, endNewPos,
+                  endEventPos, featureType, near, outcf)
     
     for col in posCols:
-        newPos, refPos, eventPos, inDeletion = adjustPosition(parts[col], offsets, keys)
+        newPos, refPos, eventPos, inDeletion = \
+            adjustPosition(parts[col], offsets, keys)
         if inDeletion:
             comment = 'Position in deletion, adjusted to base after deletion'
             doComment(featureType, chr, startRefPos, endRefPos, refPos, newPos,
@@ -261,15 +288,22 @@ def processLine(line, chrCol, startCol, endCol, posCols, chrOffs, chrKeys, typeC
             parts[col] = str(newPos)
 
         if newPos < startNewPos:
-            print >> sys.stderr, 'ERROR position before start', chr + ':' + str(newPos), 'in feature at', str(startNewPos) + '-' + str(endNewPos), '(reference coords:', str(startRefPos) + '-' + str(endRefPos) + ')'
+            print >> sys.stderr, 'ERROR position before start', \
+                chr + ':' + str(newPos), 'in feature at', \
+                str(startNewPos) + '-' + str(endNewPos), '(reference ' \
+                'coords:', str(startRefPos) + '-' + str(endRefPos) + ')'
 
         if newPos > endNewPos:
-            print >> sys.stderr, 'ERROR position after end', chr + ':' + str(newPos), 'in feature at', str(startNewPos) + '-' + str(endNewPos), '(reference coords:', str(startRefPos) + '-' + str(endRefPos) + ')'
+            print >> sys.stderr, 'ERROR position after end', \
+                chr + ':' + str(newPos), 'in feature at', \
+                str(startNewPos) + '-' + str(endNewPos), '(reference ' \
+                'coords:', str(startRefPos) + '-' + str(endRefPos) + ')'
 
         # Is this position within (the user specified) 'near' bases of an
         # indel?
         if near:
-            checkNear(chr, startRefPos, endRefPos, refPos, newPos, eventPos, featureType, near, outcf)
+            checkNear(chr, startRefPos, endRefPos, refPos, newPos,
+                      eventPos, featureType, near, outcf)
 
     # Update the file
     parts[startCol] = str(startNewPos)
@@ -278,7 +312,9 @@ def processLine(line, chrCol, startCol, endCol, posCols, chrOffs, chrKeys, typeC
 
 
 def updateHeader(strain, outf):
-    print >> outf, '# The coordinates in this file have been adjusted for %s' % strain
+    print >> outf, '# The coordinates in this file have been ' \
+            'adjusted for strain %s' % strain
+    print >> outf, "# based on Sanger's short Indel vcf file for that strain."
     print >> outf, '# This file is based on:\n#'
 
 
@@ -296,13 +332,12 @@ def main():
 
     anns = args[0]
     strain = args[1]
-    
+
     if opts.near:
         near = int(opts.near)
     else:
         near = None
 
-    chrOffs, chrKeys   = readOffsets(opts.dir, strain)
     quiet = opts.quiet
 
     # Capture the interesting columns and make them 0-based. (Input
@@ -333,16 +368,23 @@ def main():
     outcf = None
     if opts.ofn:
         try:
-            outf = open(opts.ofn, 'w')
+            outf = open(os.path.join(opts.dir, opts.ofn), 'w')
         except IOError:
-            print >> sys.stderr, 'Could not open', opts.ofn, 'for output.\nExiting...'
+            print >> sys.stderr, 'Could not open', \
+                    os.path.join(opts.dir, opts.ofn), \
+                    'for output.\nExiting...'
     if opts.comments:
         try:
             #Try to open the comments file.
-            outcf = open(opts.comments, 'w')
+            outcf = open(os.path.join(opts.dir, opts.comments), 'w')
         except IOError:
-            print >> sys.stderr, 'Could not open comments file', opts.comments, 'for output. Continuing processing without comments.'
+            print >> sys.stderr, 'Could not open comments file', \
+                    os.path.join(opts.dir, opts.comments), \
+                    'for output. Continuing processing without ' \
+                    'comments.'
             outcf = None
+
+    chrOffs, chrKeys   = readOffsets(opts.dir, strain)
 
     headerProcessed = False
     headerUpdated = False
@@ -360,7 +402,8 @@ def main():
             else:
                 headerProcessed = True
 
-        processLine(line, chrCol, startCol, endCol, posCols, chrOffs, chrKeys, typeCol, near, outf, outcf)
+        processLine(line, chrCol, startCol, endCol, posCols, chrOffs,
+                    chrKeys, typeCol, near, outf, outcf)
 
     if outf != sys.stdout:
         outf.close()

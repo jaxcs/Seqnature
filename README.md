@@ -57,6 +57,8 @@ not "chr1", "chr2", etc.
       -o OUTPUT, --output=OUTPUT
                             File into which the genome is written. (Default:
                             stdout)
+      -p, --pass-only       Only use SNPs and Indels that passed quality
+                            filters
       -r REFERENCE, --reference=REFERENCE
                             Path to the reference file used as the base.
       -s SNPS, --snps=SNPS  Path to the snps vcf file
@@ -164,6 +166,8 @@ Running the program without any arguments produces the following usage informati
       -o OUTPUT, --output-sequence=OUTPUT
                             File (fasta) into which to write the sequence.
                             (Default: stdout)
+      -p, --pass-only       Only use SNPs and Indels that passed quality
+                            filters
       -r REFERENCE, --reference=REFERENCE
                             Base name of the reference file that has been
                             preprocessed by reconstruct_NCBI.py, e.g.,
