@@ -1,8 +1,11 @@
 #Seqnature
 
-The programs in this repository reflect as-yet unpublished work.
-Please contact Steven Munger, Ph.D. (steven.munger at jax.org) for further
-information.
+If you use Seqnature for your published research, please cite:
+
+Munger SC, Raghupathy N, Choi KB, Simons AK, Gatti DM, Hinerfeld DA, Svenson KL, 
+Keller MP, Attie AD, Hibbs MA, Graber JH, Chesler EJ, and Churchill GA. 
+RNA-seq alignment to individualized genomes improves transcript abundance 
+estimates in multiparent populations. GENETICS, In Press. 
 
 The programs' author is Al Simons (al.simons at jax.org).  Please contact him
 to report any problems with the programs.
