@@ -17,6 +17,12 @@ It was created for, and most heavily tested on, mouse.
 If you have gtf files with annotations based on the same reference, the
 programs can create an updated gtf, reflecting the Indels.
 
+### NOTE: Seqnature to be replaced
+
+The Jackson Laboratory is working on a new software suite which will replace
+Seqnature.  At that point support for Seqnature will be terminated.  We expect
+this to be in early 2016.
+
 ##Creating new sequence and annotations for strains
 This section discusses the programs used to create strain-specific references
 and annotation files, __build_new_sequence_from_vcfs.py__ and
@@ -42,12 +48,6 @@ positions within the chromosome that are to be updated.
 
 The _Seqnature_ programs expect chromosome names of the form "1", "2", "X", etc,
 not "chr1", "chr2", etc.
-
-### NOTE: Seqnature to be replaced
-
-The Jackson Laboratory is working on a new software suite which will replace
-Seqnature.  At that point support for Seqnature will be terminated.  We expect
-this to be in early 2016.
 
 ###Using build_new_sequence_from_vcfs.py
 
