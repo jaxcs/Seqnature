@@ -43,6 +43,12 @@ positions within the chromosome that are to be updated.
 The _Seqnature_ programs expect chromosome names of the form "1", "2", "X", etc,
 not "chr1", "chr2", etc.
 
+### NOTE: Seqnature to be replaced
+
+The Jackson Laboratory is working on a new software suite which will replace
+Seqnature.  At that point support for Seqnature will be terminated.  We expect
+this to be in early 2016.
+
 ###Using build_new_sequence_from_vcfs.py
 
     $ ./build_new_sequence_from_vcfs.py --help
@@ -208,6 +214,10 @@ Running the program without any arguments produces the following usage informati
                             Column with feature type info. (Optional, one-based.)
       -x EXTENTS, --extents=EXTENTS
                             File containing the strain extents.
+
+##Changes
+
+Please see [changelog](https://github.com/jaxcs/seqnature/changelog) for information on maintenance releases.
 
 ##License
 

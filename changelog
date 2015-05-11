@@ -1,0 +1,9 @@
+Seqnature Change Log
+
+V1.2 build_new_sequence_from_vcfs.py only
+	- Adapt to the new Sanger VCF format used with mouse reference
+	  build 38.
+	- Replace own reference extraction code with pyfaidx, which is
+	  now a required module.
+	- Information about het calls is now written to a filename 
+	  ending in "_het_calls.log" instead of stderr.

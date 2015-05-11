@@ -2,12 +2,13 @@
 #
 # build_reference_from_sanger_vcfs.py
 #
-# Using SNP and indel VCF files from Sanger, produce reference genomes for
-# seven of the eight CC founder strains.
+
+# Using SNP and indel VCF files from Sanger, produce pseudo-reference
+# genomes for any strain represented in the VCF.
 #
 
 #   Author: Al Simons 
-#   Copyright (C) 2012  The Jackson Laboratory
+#   Copyright (C) 2012, 2015  The Jackson Laboratory
 #
 #   This program is free software: you can redistribute it and/or modify
 #   it under the terms of the GNU Affero General Public License as
@@ -19,31 +20,40 @@
 #   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 #   GNU Affero General Public License for more details.
 #
-#   You should have received a copy of the GNU Affero General Public License
-#   along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#   You should have received a copy of the GNU Affero General Public
+#   License along with this program.  If not, see
+#   <http://www.gnu.org/licenses/>.
 
 import sys
 import os
 from optparse import OptionParser
+from pyfaidx import Fasta
 
-def parseOptions():
-    usage = 'USAGE: %prog [options] strain\n    Strain must be a column header in the two VCF files.'
 
-    parser = OptionParser(usage=usage, version="1.1")
+def parse_options():
+    usage = 'USAGE: %prog [options] strain\n    Strain must be a ' \
+            'column header in the two VCF files.'
+
+    parser = OptionParser(usage=usage, version="1.2")
 
     parser.add_option('-d', '--output-dir', dest='dir', default='.',
-                      help='Directory for output files (must already exist). (Default: current working directory.)')
+                      help='Directory for output files (must already '
+                           'exist). (Default: current working '
+                           'directory.)')
     parser.add_option('-i', '--indels', dest='indels',
                       help='path to indels vcf file')
-    parser.add_option('-o', '--output', dest='output',
-                      help='File into which the genome is written. (Default: stdout)')
-    parser.add_option('-p', '--pass-only', dest='pass_only', action='store_true', default=False,
-                      help='Only include calls that passed the filtering parameters used to create the vcf file.')
-    parser.add_option('-r', '--reference', dest='reference',
-                      help='Path to the reference file used as the base.')
-    parser.add_option('-s', '--snps', dest='snps',
+    parser.add_option('-o', '--output',
+                      help='File into which the genome is written. '
+                           '(Default: stdout)')
+    parser.add_option('-p', '--pass-only',
+                      action='store_true', default=False,
+                      help='Only include calls marked as PASS in the '
+                           'FILTER column of the vcf file.')
+    parser.add_option('-r', '--reference',
+                      help='Path to the reference file used as the '
+                           'base.')
+    parser.add_option('-s', '--snps',
                       help='Path to the snps vcf file')
-
     (opts, args) = parser.parse_args()
 
     if len(args) != 1:
@@ -62,244 +72,197 @@ def parseOptions():
 
     if errors:
         parser.error(errors)
-    return (opts, args)
+    return opts, args
+
+het_file = None
+
+
+def log_het_call(msg):
+    global het_file, args, opts
+    if het_file is None:
+        fn = os.path.join(opts.dir, args[0] + '_het_calls.log')
+        het_file = open(fn, 'w')
+    print >> het_file, msg
+
 
 class Reference:
     # Even though it is not coded as one this is in fact a singleton.
-    def __init__(self, chrs, inF):
+
+    def __init__(self, chrs, in_f):
+        # pyfaidx uses (as the name would suggest), a .fa.fai index
+        # file.  If not present in the same directory as the .fa
+        # file, it will be generated the first time the .fa is opened.
+        # Therefore, on first use, the next line will take a while.
+        self.fasta = Fasta(in_f)
         self.chrs = chrs
-        self.nextChr = ''
-        self.currChr = ''
-        self.chrLine = ''
-        self.chrSeq = ''
-        self.file=open(inF)
-        self.inRewindSearch = False
 
-
-
-    # This is used by debugging code that is normally commented out.
-    aksdebug = None
-    def printChrs(self, msg):
-        if not Reference.aksdebug:
-            Reference.aksdebug = open('AKS_DEBUG.txt', 'w')
-        print >> Reference.aksdebug, msg, self.chrs
-        print >> sys.stderr, msg, self.chrs
-
-
-
-    def findChr(self, chr):
-        # Set up to read a particular chr
-        while chr != self.nextChr:
-            line = self.file.readline()
-            if len(line) == 0:
-                # Reached EOF.
-                # If we're not already in a rewind search, we need to try;
-                # we may have simply asked for things out of order.
-                # If, however, we are in a rewind search, then the
-                # requested chr isn't in the reference.  We need to bomb
-                # the run. (sob... wipe away tear...)
-                if not self.inRewindSearch:
-                    self.inRewindSearch = True
-                    self.file.seek(0)
-                    self.findChr(chr)
-                else:
-                    print >> sys.stderr, 'Could not find chr', chr, 'in the reference. Exiting...'
-                    sys.exit(1)
-
-            if line[:1] == '>':
-                # We've found a chromosome line.
-                # These come in multiple forms. mm9 has:
-                # >chr1
-                # NCBI has:
-                # >1 dna:chromosome chromosome...
-                # We'll isolate the chromosome name, and stash the original
-                # line so we can output it.
-                #
-                line = line.rstrip()
-                thisChr = line[1:]
-                if thisChr[:3] == 'chr':
-                    thisChr = thisChr[3:]
-                thisChr = thisChr.split(' ')[0]
-                self.chrLine = '>' + str(thisChr)
-                if thisChr == chr:
-                    self.nextChr = thisChr
-                    self.inRewindSearch = False
-
-    def readChr(self, chr):
-        seq = []
-        if chr != self.nextChr:
-            self.findChr(chr)
-        self.currChr = self.nextChr
-        while True:
-            line = self.file.readline()
-            if len(line) == 0:
-                # EOF.  Save what we have...
-                self.chrSeq = ''.join(seq)
-                self.nextChr = 'EOF'
-                return
-            line = line.rstrip()
-            if line[0] == '>':
-                # Chromosome break
-                if self.currChr == '':
-                    # First time.
-                    self.currChr = line[4:]
-                else:
-                    self.nextChr = line[4:]
-                    self.chrSeq = ''.join(seq)
-                    return
-            else:
-                # A normal sequence line
-                seq.append(line)
-
-    def getRange(self, chr, beg, end):
-        # Retreives a string representing the reference from base pair
-        # 'beg', through base pair 'end', inclusive.
-        # Notice that pairs are one based, and the string is zero based.
-        # that's why we use beg-1 and end, rather than the expected
-        # beg and end+1.
-        #
-        if chr != self.currChr:
-            if chr in self.chrs:
-                # Indicate that we've seen this chr, by removing it
-                # from the chrs list.  Then at the end, we'll output 
-                # without modifications all those chrs we didn't see
-                # while processing the SNPs and indels.
-                del(self.chrs[self.chrs.index(chr)])
-
-                # FIXME DEBUG
-                #self.printChrs("Removing chr" + chr)
-
-            self.readChr(chr)
-        return self.chrSeq[beg-1:end]
+    def get_range(self, chr, beg, end):
+        return self.fasta[chr][beg - 1:end]
 
 # End of class Reference...
 
+
 # A common class for getting info from snps and indels.
 class Result:
-    def __init__(self, chr, pos, ref, allele, change, nextRefPos, isIndel):
+    def __init__(self, chr, pos, ref, allele, change, next_ref_pos,
+                 is_indel):
         self.chr = chr
         self.pos = pos
         self.ref = ref
         self.allele = allele
         self.change = change
-        self.nextRefPos = nextRefPos
-        self.isIndel = isIndel
+        self.next_ref_pos = next_ref_pos
+        self.is_indel = is_indel
 
     def __str__(self):
-        return ('I: ' if self.isIndel else 'S: ') + self.chr + ":" + str(self.pos) + ' ' + self.ref + '->' + self.allele + '(' + str(self.change) + ') nrp:' + str(self.nextRefPos)
+        return ('I: ' if self.is_indel else 'S: ') + self.chr + ":" + \
+            str(self.pos) + ' ' + self.ref + '->' + self.allele + \
+            '(' + str(self.change) + ') nrp:' + \
+            str(self.next_ref_pos)
 
 
 #
 # A class to track indels.  Use toResult() to get results.
 # Members:
 #     chr - self explanatory
-#     position - This is NOT the position contained in the VCF file, which
-#                was the last common base between the reference and the
-#                allele.  This is some number of bases later, the position
-#                of the first different base.  Consider the case of 
-#                chr1 3000742, ref: GT, alleles G,GTT,GGTTTT.
+#     position - This is NOT the position contained in the VCF file,
+#                which was the last common base between the reference
+#                and the allele.  This is some number of bases later,
+#                of the first different base.  Consider the case of
+#                the position chr1 3000742, ref: GT, alleles
+#                G,GTT,GGTTTT.
 #                The first allele is a one base deletion.  The second is
-#                a one base insertion, 2 bases after the listed position.
+#                a one base insertion, 2 bases after the listed position
 #                the third is a change of the second base and then an
 #                insertion of 4 bases. Position for this allele would
 #                be one after the pos in the file.
-#     allele -   The bases (for an insert) starting at the first different
-#                base. Null string for a deletion.
+#     allele -   The bases (for an insert) starting at the first
+#                different base. Null string for a deletion.
 #     change -   the effect of this allele on the new coordinates.
 #                len(allele) - len(ref)
 #     nextRefPos - The next base position that is to be taken from the
 #                reference.
 #
 class Indel:
-    def __init__(self, file, column):
+    def __init__(self, file, haplotype_column, i_columns):
         global opts
         # Get the next line in the file with a call for this strain.
         # Return a list of the tab-sep line 
         # Column 6 (the 7th column) is the FILTER column, which records
         # whether or not the call passed all the filtering criteria
-        # at the time the VCF file wass created.
+        # at the time the VCF file was created.
         first = True
-        while first or (opts.pass_only and parts[6] != 'PASS') or parts[column] == '.':
+        short = False
+        parts = []
+        ref_call = False
+        while first or short or \
+                (opts.pass_only and
+                    parts[i_columns['FILTER']] != 'PASS') or \
+                parts[haplotype_column] == '.' or \
+                ref_call:
             line = file.readline()
             if len(line) == 0:
                 # We've reached EOF.
                 self.chr = 'EOF'
-                return 
+                return
             line = line.rstrip()
             parts = line.split('\t')
+            short = len(parts) < 9
             first = False
-        # Now we have a line with an indel for this strain.
-        self.chr = parts[0]
-        position = int(parts[1])
-        ref = parts[3]
-        alleleGroup = parts[4]
-        call = parts[column]
 
-        alleles = alleleGroup.split(',')
-        parts1 = call.split(':')
-        parts2 = parts1[0].split('/')
-        if parts2[0] != parts2[1]:
-            print >> sys.stderr, 'het call found at chr{0} position' \
-                                 ' {1}: {2} Using first allele.' \
-                                 .format(self.chr, position, call)
+            # Find out if this is a ref call for this strain.
+            # Since in the event of a het call, we arbitrarily use the
+            # first called allele, we'll determine that this is a ref
+            # call if the first identified allele is 0.  However, if it
+            # is het, we'll report it.
+
+            self.chr = parts[i_columns['#CHROM']]
+            position = int(parts[i_columns['POS']])
+            call = parts[haplotype_column]
+
+            parts1 = call.split(':')
+            parts2 = parts1[0].split('/')
+
+            # Is this a ref call? Continue if so, by setting up the
+            # loop condition
+            ref_call = parts2[0] == '0'
+
+            # Report a het call.
+            if parts2[0] == '0' and parts2[0] != parts2[1]:
+                log_het_call('Indel het REF call at chr{0}'
+                    'position {1}. Using ref; continuing.'.format(
+                        self.chr, position))
+
+        # Now we have a line with an indel for this strain.
+        ref = parts[i_columns['REF']]
+        allele_group = parts[i_columns['ALT']]
+        alleles = allele_group.split(',')
         #Calls use 1-based allele references.
         try:
-            self.allele = alleles[int(parts2[0])-1]
+            self.allele = alleles[int(parts2[0]) - 1]
         except IndexError:
             print >> sys.stderr, 'Index error processing', parts
             sys.exit(1)
-            
 
+        # Warn about a het call
+        if parts2[0] != parts2[1]:
+            log_het_call('Indel het call found at chr{0} position '
+                '{1}: {2} Using alt allele {3} ({4}).'.format(
+                    self.chr, position, call, parts2[0],
+                    self.allele))
         #
-        # The way the Sanger VCFs are created, the first base in both the
-        # reference and the allele will be the same. Further bases _may_
-        # be the same. Make position be the first different base and fix up the
-        # allele to not contain the common bases.
+        # The way the Sanger VCFs are created, the first base in both
+        # the reference and the allele will be the same. Further bases
+        # _may_ be the same. Make position be the first different base
+        # and fix up the allele to not contain the common bases.
         allele = self.allele
-        minLen = min(len(ref), len(allele))
-        diffPos = 0
-        for n in range(minLen):
+        min_len = min(len(ref), len(allele))
+        diff_pos = 0
+        for n in range(min_len):
             if ref[n] != allele[n]:
-                diffPos = n
+                diff_pos = n
                 break
 
-        # If diffPos == 0, the reference and allele matched throughout
-        # their length.  This is either an insertion after the reference,
-        # or a deletion.
-        # Either way, the difference position is the base after the shorter
-        # of the two.
-        if diffPos == 0:
-            diffPos = minLen
-        self.position = position + diffPos
-        self.allele = self.allele[diffPos:]
-        self.ref = ref[diffPos:]
+        # If diff_pos == 0, the reference and allele matched throughout
+        # their length.  This is either an insertion after the
+        # reference, or a deletion.
+        # Either way, the difference position is the base after the
+        # shorter of the two.
+        if diff_pos == 0:
+            diff_pos = min_len
+        self.position = position + diff_pos
+        self.allele = self.allele[diff_pos:]
+        self.ref = ref[diff_pos:]
 
-        # A somewhat common pattern is for a few bases at the beginning to be 
-        # deleted, followed by many bases that are the same.  
+        # A somewhat common pattern is for a few bases at the beginning
+        # to be deleted, followed by many bases that are the same.
         # This is necessitated by the multi-strain nature of the file. 
         # Some other strain may have deleted many more bases here.
-        lenDiff = len(self.ref) - len(self.allele)
-        if lenDiff > 0 and self.ref[lenDiff:] == self.allele:
-            self.ref = self.ref[:lenDiff]
+        len_diff = len(self.ref) - len(self.allele)
+        if len_diff > 0 and self.ref[len_diff:] == self.allele:
+            self.ref = self.ref[:len_diff]
             self.allele = ''
-        
-        # Also, the change in position will be len(allele) - len(ref).  This
-        # will be negative for a deletion, and positive for an insertion.
-        self.change = len(self.allele) - len(self.ref)
-        self.nextRefPos = self.position + len(self.ref)
 
-    def toResult(self):
-        return Result(self.chr, self.position, self.ref, self.allele, self.change, 
-                      self.nextRefPos, True)
+        # Also, the change in position will be len(allele) - len(ref).
+        # This will be negative for a deletion, and positive for an
+        # insertion.
+        self.change = len(self.allele) - len(self.ref)
+        self.next_ref_pos = self.position + len(self.ref)
+
+    def to_result(self):
+        return Result(self.chr, self.position, self.ref, self.allele,
+                      self.change, self.next_ref_pos, True)
 
     def __str__(self):
-        return self.chr + ':' + str(self.position) + ' ' + self.ref + '->' + self.allele + ' ' + str(self.change) + ' ' + str(self.nextRefPos)
+        return self.chr + ':' + str(self.position) + ' ' + self.ref + \
+            '->' + self.allele + ' ' + str(self.change) + ' ' + \
+            str(self.next_ref_pos)
 
     def __lt__(self, snp):
         if isinstance(snp, Snp):
             if self.chr != snp.chr:
-                # Currently, the VCF files SEEM TO contain chrs 1-N and X, Y, in that
-                # order.  THIS PROGRAM ASSUMES THAT'S TRUE...  Hope so.
+                # Currently, the VCF files SEEM TO contain chrs 1-N
+                # and X, Y, in that order.
                 try:
                     return int(self.chr) < int(snp.chr)
                 except ValueError:
@@ -307,9 +270,9 @@ class Indel:
                     # Figure out whether either is numeric. It is "less"
                     try:
                         int(self.chr)
-                        # If we get here, then we are less. (self is numeric,
-                        # so snp has to be alphabetic, which we regard as
-                        # greater.)
+                        # If we get here, then we are less. (self is
+                        # numeric, so snp has to be alphabetic, which
+                        # we regard as greater.)
                         return True
                     except:
                         pass
@@ -318,7 +281,7 @@ class Indel:
                         # And if we get here, self is greater.
                         return False
                     except:
-                        Pass
+                        pass
                     # Both were alphabetic.  Do simple string sort.
                     return self.chr < snp.chr
 
@@ -336,14 +299,22 @@ class Indel:
 #     change - 0 (snps are always a single base replacement; no length
 #              differences.) (pseudo member; materialized when needed.)
 #     nextRefPos - position + 1 (pseudo member)
+
+
 class Snp:
-    def __init__(self, file, column):
+    def __init__(self, file, haplotype_column, s_columns):
         global opts
         # Get the next line in the file with a call for this strain.
         # Return a list of the tab-sep line 
         # Column 6 is the FILTER column.  See Indel.__init__().
         exclude = True
-        while exclude or (opts.pass_only and parts[6] != 'PASS'):
+        parts = []
+        call_parts = []
+        ref_call = False
+        while exclude or \
+              (opts.pass_only and
+                  parts[s_columns['FILTER']] != 'PASS') or \
+              ref_call:
             line = file.readline()
             if len(line) == 0:
                 # We've reached EOF.
@@ -351,40 +322,66 @@ class Snp:
                 return
             line = line.rstrip()
             parts = line.split('\t')
-            call = parts[column]
-            callParts = call.split(':')
-            #
-            # The ATG field is callParts[1].  We're not interested in 0.
-            # This field can be '.', in which case we skip the line.
-            exclude = ( len(callParts) < 2 or
-                        callParts[1] != '1')
+            if len(parts) < 9:
+                continue
+            call = parts[haplotype_column]
+            call_parts = call.split(':')
+            # Old style Sanger VCFs indicated no call for this
+            # haplotype by a dot. Newer forms indicate by calling the
+            # reference with '0/0'.
+            exclude = len(call_parts) < 2
+
+            self.chr = parts[0]
+            self.position = int(parts[1])
+            alleles = call_parts[0].split('/')
+
+            # Is this a ref call? Continue if so, by setting up the
+            # loop condition
+            ref_call = alleles[0] == '0'
+
+            # Report a het call.
+            if alleles[0] == '0' and alleles[0] != alleles[1]:
+                log_het_call('SNP het REF call at chr{0}'
+                    'position {1}. Using ref; continuing.'.format(
+                        self.chr, self.position))
 
         # Now we have a line with a snp for this strain.
-        self.chr = parts[0]
-        self.position = int(parts[1])
+        #print >> sys.stderr, "SNP-Found", call, line
         self.ref = parts[3]
-        #The allele possibilities are comma separated. They are indexed by 
-        # callParts[0].split('/')[1]
-        alleles = callParts[0].split('/')
-        whichAllele = int(alleles[0])-1
+        # The allele possibilities are comma separated. They are indexed
+        # by call_parts[0].split('/')[1]
+        #
+        which_allele = int(alleles[0]) - 1
+
         try:
-            self.allele = parts[4].split(',')[whichAllele]
+            self.allele = parts[4].split(',')[which_allele]
         except IndexError:
-            print >> sys.stderr, '\n\nAllele lookup failed.\n    Allele field =', parts[4], '\ncall parts =', callParts, '\nwhichAllele =', whichAllele
+            print >> sys.stderr, '\n\nAllele lookup failed.\n    ' \
+                                 'Allele field =', parts[4], \
+                                 '\ncall parts =', call_parts, \
+                                 '\nwhich allele =', which_allele
             sys.exit(1)
 
-    def toResult(self):
-        return Result(self.chr, self.position, self. ref, self.allele, 0,
-                      self.position+1, False)
+        # Warn about a het call
+        if alleles[0] != alleles[1]:
+            log_het_call('SNP het call found at chr{0} position '
+                '{1}: {2} Using alt allele {3} ({4}).'.format(
+                    self.chr, self.position, call, which_allele,
+                    self.allele))
+
+    def to_result(self):
+        return Result(self.chr, self.position, self. ref, self.allele,
+                    0, self.position + 1, False)
 
     def __str__(self):
-        return self.chr + ':' + str(self.position) + ' ' + self.ref + '->' + self.allele
+        return self.chr + ':' + str(self.position) + ' ' + self.ref + \
+            '->' + self.allele
 
     def __lt__(self, indel):
         if isinstance(indel, Indel):
             if self.chr != indel.chr:
-                # Currently, the VCF files SEEM TO contain chrs 1-N and X, Y, in that
-                # order.  THIS PROGRAM ASSUMES THAT'S TRUE...  Hope so.
+                # Currently, the VCF files SEEM TO contain chrs 1-N
+                # and X, Y, in that order.
                 try:
                     return int(self.chr) < int(indel.chr)
                 except ValueError:
@@ -392,9 +389,9 @@ class Snp:
                     # Figure out whether either is numeric. It is "less"
                     try:
                         int(self.chr)
-                        # If we get here, then we are less. (self is numeric,
-                        # so indel has to be alphabetic, which we regard as
-                        # greater.)
+                        # If we get here, then we are less. (self is
+                        # numeric, so indel has to be alphabetic, which
+                        # we regard as greater.)
                         return True
                     except:
                         pass
@@ -403,170 +400,213 @@ class Snp:
                         # And if we get here, self is greater.
                         return False
                     except:
-                        Pass
+                        pass
                     # Both were alphabetic.  Do simple string sort.
-                    return self.chr < snp.chr
+                    return self.chr < indel.chr
 
             # Same chr, return based on position, already ints.
             return self.position < indel.position
         print >> sys.stderr, 'Must be called with an Indel argument.'
         return NotImplemented
 
+
 #Skip over vcf file headers. Return the column headers.
-def skipHeaders(file):
-    first = True
-    while first or line[:2] == '##':
-        first = False
-        line = file.readline()
-    if line[0:6] != '#CHROM':
-        print >> sys.stderr, 'Hmmm.  Expected column headers. Exiting...'
+def skip_headers(f):
+    line = '##'
+    while line[:2] == '##':
+        line = f.readline()
+    if line[:6] != '#CHROM':
+        print >> sys.stderr, 'Hmmm.  Expected column headers; ' \
+                             'got {0}.\nExiting...'.format(line)
         sys.exit(1)
+    columns = {}
+    parts = line.split('\t')
+    for n in range(len(parts)):
+        columns[parts[n].strip()] = n
 
-    return line[1:].rstrip().split('\t')
+    return columns, line
 
-generatedSequence = ''
-def prettyizeSequence(new):
-    global generatedSequence, outputFile
-    flushExisting =  new == ''
-    existing = generatedSequence + new
-    exLen = len(existing)
+generated_sequence = ''
+
+
+def prettyize_sequence(new):
+    global generated_sequence, output_file
+    flush_existing = new == ''
+    existing = generated_sequence + str(new)
+    ex_len = len(existing)
     offset = 0
-    while exLen >= 60:
-        line = existing[offset:offset+60]
+    while ex_len >= 60:
+        line = existing[offset:offset + 60]
         if len(line) != 60:
             print >> sys.stderr, "ERROR: pretty has short line."
-        print >> outputFile, line
+        print >> output_file, line
         offset += 60
-        exLen -= 60
-    generatedSequence = existing[offset:]
-    if flushExisting and len(generatedSequence) > 0:
-        print >> outputFile, generatedSequence
-        generatedSequence = ''
+        ex_len -= 60
+    generated_sequence = existing[offset:]
+    if flush_existing and len(generated_sequence) > 0:
+        print >> output_file, generated_sequence
+        generated_sequence = ''
 
-    
-currentChr = ''
-chrInfo = {}
-offsetFile = None
-outputPos = 0
 
-def processAnEvent(ref, res, strain, dir):
-    global currentChr, chrInfo, offsetFile, indelsProcessed, outputPos, outputFile
+current_chr = ''
+chr_info = {}
+offset_file = None
+output_pos = 0
 
-    if currentChr == '':
-        offset = 0
-    else:
-        offset = chrInfo[currentChr]['currOffset']
 
-    if res.chr != currentChr:
+def process_an_event(ref, res, strain, dir):
+    global current_chr, chr_info, offset_file, \
+        output_pos, output_file
+
+    if res.chr != current_chr:
         # Set up for processing a new (maybe) chr.
         #print >> sys.stderr, 'Processing new chr', res.chr
-        if offsetFile:
+        if offset_file:
             # If we have an offsetFile, we have been processing a
             # chr.  Flush the previous chr's remaining sequence.
-            finishChromosome(ref, currentChr, chrInfo[currentChr]['nextRefPos'])
-            offsetFile.close()
+            finish_chromosome(ref, current_chr, chr_info[current_chr]
+                             ['nextRefPos'])
+            offset_file.close()
 
-        if res.chr in chrInfo:
+        if res.chr in chr_info:
             # We've already seen this chr!  This is a problem.
-            print >> sys.stderr, 'Seeing chr', res.chr, 'again... Exiting...'
-            print >> sys.stderr, 'old chr was', currentChr
+            # We expect the indel and snp files to have contiguous
+            # chromosomes.
+            print >> sys.stderr, 'Seeing chr {0} again... Exiting...'\
+                '\n    old chr was {1}'.format(res.chr, current_chr)
             sys.exit(1)
 
-        thisChrInfo = {}
-        thisChrInfo['nextRefPos'] = 1
-        thisChrInfo['currOffset'] = 0
-        chrInfo[res.chr] = thisChrInfo
-        currentChr = res.chr
-        # Find this chr in the reference now.  This will get us the chromosome line
-        # for us to print out.
-        ref.findChr(currentChr)
-        print >> outputFile, ref.chrLine
+        this_chr_info = {}
+        this_chr_info['nextRefPos'] = 1
+        this_chr_info['currOffset'] = 0
+        chr_info[res.chr] = this_chr_info
+        current_chr = res.chr
+        # Find this chr in the reference now.  This will get us the
+        # chromosome line for us to print out.
 
-        outputPos = 0
-        ofn = os.path.join(dir, strain + '_offsets_chr' + str(res.chr) + '.txt')
-        offsetFile = open(ofn, 'w')
+        ln = ref.fasta[current_chr].long_name
+
+        # FIXME  Work around a bug in pyfaidx, seen 20150401:
+        # If the last line of a chr is a full 60 characters,
+        # the long name of the following chr will be missing
+        # its first character.  There are two instances of
+        # this in GRCm38_68.fa, of which chr 3, affecting
+        # chr 4, is of interest to us (the other is a scaffold,
+        # which we aren't processing.  The bug fix, below,
+        # will catch these cases, and will continue to be OK
+        # when the bug is fixed.  Hopefully, we can pull it
+        # out at some point.
+        if current_chr[0] != ln[0]:
+            ln = current_chr[0] + ln
+        # FIXME: End of bug workaround.
+
+        print >> output_file, '>{0}'.format(ln)
+
+        output_pos = 0
+        ofn = os.path.join(dir, '{0}_offsets_chr{1}.txt'.format(
+            strain, current_chr))
+        offset_file = open(ofn, 'w')
 
     # End of processing for chr changeover...
 
     # We have a new event, hopefully at some point past where we 
     #     previously were.
     # We need to output the ref up to this new point
-    thisChrInfo = chrInfo[res.chr]
+    this_chr_info = chr_info[res.chr]
 
-    outputError = False
+    output_error = False
 
     # There is at least one case of an indel being completely contained
-    # in a previous del (129S1 chr1 19525839 deletes 19525840-19525879, and 
-    # 19525878 deletes 19525879 )  Check for other instances of this event.
-    if res.pos < int(thisChrInfo['nextRefPos']):
-        # print >> sys.stderr, 'skipping event; too early: \n', res.line, '\nevent =', res.pos, 'nextRefPos =', thisChrInfo['nextRefPos']
+    # in a previous del (129S1 chr1 19525839 deletes 19525840-19525879,
+    # and 19525878 deletes 19525879 )  Check for other instances of
+    # this event.
+    if res.pos < int(this_chr_info['nextRefPos']):
+        # print >> sys.stderr, 'skipping event; too early: \n', \
+        # res.line, '\nevent =', res.pos, 'nextRefPos =', \
+        # this_chr_info['nextRefPos']
         # Don't to anything with this event.  But before we go, check
         # for edge conditions.  If we find anything unusual, (e.g.,
         # incomplete overlap) report and exit.
-        if (res.pos + (len(res.allele)-res.change)) - 1 >= res.nextRefPos:
-            print >> sys.stderr, "UNUSUAL: partially pverlapping indels."
+        if (res.pos + (len(res.allele) - res.change)) - 1 >= \
+                res.next_ref_pos:
+            print >> sys.stderr, \
+                "UNUSUAL: partially overlapping indels."
             sys.exit(2)
         return
 
-    refSeq = ref.getRange(res.chr, thisChrInfo['nextRefPos'], res.pos-1)
-    outputPos += len(refSeq)
-    if len(refSeq) > 0:
-        prettyizeSequence(refSeq)
+    ref_seq = ref.get_range(res.chr, this_chr_info['nextRefPos'],
+                            res.pos - 1)
+    output_pos += len(ref_seq)
+    if len(ref_seq) > 0:
+        prettyize_sequence(ref_seq)
     if len(res.allele) > 0:
-        prettyizeSequence(res.allele)
-        outputPos += len(res.allele)
+        prettyize_sequence(res.allele)
+        output_pos += len(res.allele)
 
-    thisChrInfo['nextRefPos'] = res.nextRefPos
+    this_chr_info['nextRefPos'] = res.next_ref_pos
     if res.change != 0:
-        thisChrInfo['currOffset'] += res.change
-        print >> offsetFile, '%s\t%d' % (res.pos, thisChrInfo['currOffset'])
+        this_chr_info['currOffset'] += res.change
+        print >> offset_file, '%s\t%d' % (res.pos,
+                                         this_chr_info['currOffset'])
 
-    if outputPos != (res.nextRefPos + thisChrInfo['currOffset'] - 1):
-        print >> sys.stderr, '\noutputPos error: oP =', outputPos, 'res.pos:', res.pos, 'res.nextRefPos = ', res.nextRefPos, '+', thisChrInfo['currOffset']
-        outputError = True
+    if output_pos != (res.next_ref_pos +
+                    this_chr_info['currOffset'] - 1):
+        print >> sys.stderr, '\noutputPos error: oP =', output_pos, \
+            'res.pos:', res.pos, 'res.nextRefPos = ', \
+            res.next_ref_pos, '+', this_chr_info['currOffset']
+        output_error = True
 
-    # print >> sys.stderr, 'op:', outputPos, 'off:', thisChrInfo['currOffset']
-    if outputError:
+    # print >> sys.stderr, 'op:', outputPos, 'off:', \
+    #     this_chr_info['currOffset']
+    if output_error:
         sys.exit(1)
 
-def processNextEvent(ref, indel, snp, strain, dir):
-    processingIndel = indel < snp
-    if processingIndel:
-        res = indel.toResult()
+
+def process_next_event(ref, indel, snp, strain, dir):
+    processing_indel = indel < snp
+    if processing_indel:
+        res = indel.to_result()
     else:
-        res = snp.toResult()
-    processAnEvent(ref, res, strain, dir)
+        res = snp.to_result()
+    process_an_event(ref, res, strain, dir)
 
-    return processingIndel
+    return processing_indel
 
 
-def processRemaining(ref, f, strainCol, strain, processingIndels, dir):
+def process_remaining(ref, f, strain_col, strain,
+                      processing_indels, dir, columns):
+    if processing_indels:
+        print 'Processing remaining indels'
+    else:
+        print 'Processing remaining snps'
     while True:
-        if processingIndels:
-            event = Indel(f, strainCol)
+        if processing_indels:
+            event = Indel(f, strain_col, columns)
         else:
-            event = Snp(f, strainCol)
+            event = Snp(f, strain_col, columns)
         if event.chr == 'EOF':
             # We're done.
             break
-        res = event.toResult()
-        processAnEvent(ref, res, strain, dir)
+        res = event.to_result()
+        process_an_event(ref, res, strain, dir)
 
 
-def finishChromosome(ref, chr, nextRefPos):
-    seq = ref.getRange(chr, nextRefPos, 999999999999999)
+def finish_chromosome(ref, chr, next_ref_pos):
+    print 'Finishing chr', chr
+    seq = ref.get_range(chr, next_ref_pos, sys.maxint)
     if len(seq) > 0:
-        prettyizeSequence(seq)
+        prettyize_sequence(seq)
     # Flush the pretty buffer.
-    prettyizeSequence('')
+    prettyize_sequence('')
 
 
-def finishUp(ref, chrs):
-    global currentChr, chrInfo, offsetFile, outputFile
+def finish_up(ref, chrs):
+    global current_chr, chr_info, offset_file, output_file
 
     # We've finished the last events in the files.  Close out
     # the last chr we were processing.
-    finishChromosome(ref, currentChr, chrInfo[currentChr]['nextRefPos'])
+    finish_chromosome(ref, current_chr,
+                      chr_info[current_chr]['nextRefPos'])
 
     # We've now output all of every chromosome that had a SNP or Indel.
     # But there could have been chromosomes without one; they aren't
@@ -575,52 +615,54 @@ def finishUp(ref, chrs):
     # But they are listed in the list "chrs". So we'll output all of
     # those now.
 
-    # FIXME DEBUG
-    #ref.printChrs("in Finishup")
+    # The global chr_info contains a key for each chr we've processed.
+    # Make a new list containing only those chrs we haven't seen, and
+    # write them out unchanged.
 
-    # The code that we're going to call in the loop below manipulated the
-    # list by deleting elements.  That makes the loop unreliable, and the
-    # walk misses some elements.  Make a private copy of the list, so that
-    # it isn't messed with.
-    chrsLocal = []
+    chrs_local = []
     for chr in chrs:
-        chrsLocal.append(chr)
-    for chr in chrsLocal:
-        ref.findChr(chr)
-        print >> outputFile, ref.chrLine
-        seq = ref.getRange(chr, 1, 99999999999)
-        if len(seq) > 0:
-            prettyizeSequence(seq)
-        prettyizeSequence('')
+        if chr not in chr_info:
+            chrs_local.append(chr)
 
-def enumerateChrs(chrs, ref, outDir):
-    # It may be the case that some chromosomes don't have an indel or SNP.
-    # We're outputting sequence to the new "reference" based on the processing
-    # of those files.  To make sure we don't omit any chromosomes, we need
-    # to know what chrs are in the reference.  So we'll make a quick scan
-    # of the reference and record all the chrs we find.  To help the companion
-    # program adjust_annotations.py which needs the same information, we'll 
+    for chr in chrs_local:
+        print 'Writing out', chr
+
+        print >> output_file, '>' + ref.fasta[chr].long_name
+        seq = ref.get_range(chr, 1, sys.maxint)
+        if len(seq) > 0:
+            prettyize_sequence(seq)
+        prettyize_sequence('')
+
+
+def enumerate_chrs(chrs, ref, out_dir):
+    # It may be the case that some chromosomes don't have an indel or
+    # SNP. We're outputting sequence to the new "reference" based on
+    # the processing of those files.  To make sure we don't omit any
+    # chromosomes, we need to know what chrs are in the reference.
+    # Fortunately, pyfaidx gives us an easy way to do that.
+    # To help the companion program adjust_annotations.py
+    # which needs the same information, we'll
     # also record the list in a file.
-    of = open(os.path.join(outDir, 'foundChromsomes.txt'), 'w')
-    for line in open(ref):
-        if line[0] == '>':
-            # Trim off the '>' or '>chr' and newline
-            if line[:4] == '>chr':
-                chr = line[4:-1]
-            else:
-                chr = line[1:-1]
-            # Some fasta files (e.g., NCBI) have more information after the 
-            # chromosome name.  Strip it off.
-            chr = chr.split(' ')[0]
+
+    # This is also where we drop out all the scaffolds included by the
+    # GRC, if any.  We don't want to process those.
+    of = open(os.path.join(out_dir, 'foundChromsomes.txt'), 'w')
+    c = ref.fasta.keys()
+    for chr in sorted(c):
+        # Filter out unplaced extents / scaffolds.
+        if len(chr) < 4:
             chrs.append(chr)
             print >> of, chr
     of.close()
 
-outputFile = None
+output_file = None
 opts = None
+args = None
+
+
 def main():
-    global outputFile, opts
-    opts, args = parseOptions()
+    global output_file, opts, args
+    opts, args = parse_options()
     strain = args[0]
 
     # Track the chromosomes in this organism
@@ -631,74 +673,83 @@ def main():
     indels = open(opts.indels)
     snps = open(opts.snps)
     dir = opts.dir
-    if opts.output:
-        outputFile = open(os.path.join(dir, opts.output), 'w')
-    else:
-        outputFile = sys.stdout
+    indel = None
+    snp = None
 
-    # First, prepare for program adjust_annotations.py by getting all the
-    # chromosomes.
-    enumerateChrs(chrs, opts.reference, dir)
+    if opts.output:
+        output_file = open(os.path.join(dir, opts.output), 'w')
+    else:
+        output_file = sys.stdout
+
+    # First, prepare for program adjust_annotations.py by getting all
+    # the chromosomes.
+    enumerate_chrs(chrs, ref, dir)
 
     # Prepare for processing the indels file
     # Skip the indels vcf header cruft
-    iHeaders = skipHeaders(indels)
+    i_columns, i_header_line = skip_headers(indels)
     try:
-        iStrainCol = iHeaders.index(strain)
-    except ValueError:
-        print >> sys.stderr, 'Hmmmm. Strain', strain, 'not found in indels header line\n', iHeaders
+        i_strain_col = i_columns[strain]
+    except KeyError:
+        print >> sys.stderr, 'Hmmmm. Strain', strain, \
+            'not found in indels header line\n', i_header_line
         sys.exit(1)
-    # From here on out all lines in the indels file will be indel records.
-    # Flag that we need to refresh the indel
-    needIndel = True
+    # From here on out all lines in the indels file will be indel
+    # records. Flag that we need to refresh the indel
+    need_indel = True
 
     # Similarly set up the snps file
-    sHeaders = skipHeaders(snps)
+    s_columns, s_header_line = skip_headers(snps)
     try:
-        sStrainCol = sHeaders.index(strain)
-    except ValueError:
-        print >> sys.stderr, 'Hmmmm. Strain', strain, 'not found in snps header line\n', sHeaders
+        s_strain_col = s_columns[strain]
+    except KeyError:
+        print >> sys.stderr, 'Hmmmm. Strain', strain, \
+            'not found in snps header line\n', s_header_line
         sys.exit(1)
     # From here on out all lines in the snps file will be snp records.
     # Flag that we need to refresh the snp
-    needSnp = True
-    
+    need_snp = True
+
     # Main processing loop...
     while True:
-        if needIndel:
-            indel = Indel(indels, iStrainCol)
+        if need_indel:
+            indel = Indel(indels, i_strain_col, i_columns)
             if indel.chr == 'EOF':
                 # We exhausted the indels file.  We'll clean up the snps
                 # after the loop
                 break
-            needIndel = False
-        
-        if needSnp:
-            snp = Snp(snps, sStrainCol)
+            need_indel = False
+
+        if need_snp:
+            snp = Snp(snps, s_strain_col, s_columns)
             if snp.chr == 'EOF':
                 # We exhausted the snps file.  We'll clean up the indels
                 # after the loop
                 break
-            needSnp = False
+            need_snp = False
 
         # Now we have an indel and a snp.  Process whichever is first.
         # This function will return True if it processed the indel,
         # False if it processed the snp.
-        processedIndel = processNextEvent(ref, indel, snp, strain, dir)
-        if processedIndel:
-            needIndel = True
+        processed_indel = process_next_event(ref, indel, snp,
+                                             strain, dir)
+        if processed_indel:
+            need_indel = True
         else:
-            needSnp = True
+            need_snp = True
 
     # End of the main loop.  We have exhausted one or the other input
     # file.  Now clean up the remainder of the other file.
     if indel.chr == 'EOF':
         # Last parameter False indicates processing snps
-        processRemaining(ref, snps, sStrainCol, strain, False, dir)
+        process_remaining(ref, snps, s_strain_col, strain, False, dir,
+                          s_columns)
     elif snp.chr == 'EOF':
-        processRemaining(ref, indels, iStrainCol, strain, True, dir)
+        process_remaining(ref, indels, i_strain_col, strain, True, dir,
+                          i_columns)
 
     # That's about it!
-    finishUp(ref, chrs)
+    finish_up(ref, chrs)
 
-main()
+if __name__ == '__main__':
+    main()
